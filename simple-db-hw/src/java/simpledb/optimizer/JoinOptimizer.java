@@ -130,7 +130,7 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            return cost1 + cost2*card1 + card1*card2;
         }
     }
 
@@ -176,6 +176,22 @@ public class JoinOptimizer {
                                                    Map<String, Integer> tableAliasToId) {
         int card = 1;
         // some code goes here
+        switch(joinOp) {
+    	case EQUALS: 
+    		if(t1pkey && t2pkey) card = Math.min(card1, card2);
+    		else if(t1pkey && !t2pkey) card = card2;
+    		else if(!t1pkey && t2pkey) card = card1;
+    		else card = Math.max(card1, card2);
+    		break;
+    	case NOT_EQUALS:
+    		if(t1pkey && t2pkey) card = card1 * card2 - Math.min(card1, card2);
+    		else if(t1pkey && !t2pkey) card = card1 * card2 - card2;
+    		else if(!t1pkey && t2pkey) card = card1 * card2 - card1;
+    		else card = card1 * card2 - Math.max(card1, card2);
+    		break;
+    	default:
+    		card = card1 * card2 / 3;
+    	}
         return card <= 0 ? 1 : card;
     }
 
@@ -235,10 +251,33 @@ public class JoinOptimizer {
             Map<String, TableStats> stats,
             Map<String, Double> filterSelectivities, boolean explain)
             throws ParsingException {
-
+    	if(explain) return joins;
         // some code goes here
         //Replace the following
-        return joins;
+    	PlanCache pc = new PlanCache();
+    	int cnt = joins.size();
+    	for(int size = 1; size <= cnt; ++size) {
+    		Set<Set<LogicalJoinNode>> S = enumerateSubsets(joins, size);  
+    		for(Set<LogicalJoinNode> s : S) {
+    			double bestCostSoFar = Double.MAX_VALUE;
+    			CostCard bestCostCard = new CostCard();
+    			for(LogicalJoinNode ele : s) {
+    				CostCard costCard = this.computeCostAndCardOfSubplan(stats, 
+    						filterSelectivities, ele, s, bestCostSoFar, pc);
+    				if(costCard == null) continue;
+    				bestCostSoFar = costCard.cost;
+    				bestCostCard = costCard;
+    				//pc.addPlan(s, bestCostCard.cost, bestCostCard.card, bestCostCard.plan);
+    			}
+    			if(bestCostSoFar != Double.MAX_VALUE)
+    				pc.addPlan(s, bestCostCard.cost, bestCostCard.card, bestCostCard.plan);
+    			if(size == cnt) {
+    				return bestCostCard.plan;
+    			}
+    		}
+    	}
+    	assert(false);
+    	return null;
     }
 
     // ===================== Private Methods =================================

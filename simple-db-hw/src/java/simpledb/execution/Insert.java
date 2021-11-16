@@ -1,8 +1,12 @@
 package simpledb.execution;
 
+import java.io.IOException;
+
 import simpledb.common.Database;
 import simpledb.common.DbException;
+import simpledb.common.Type;
 import simpledb.storage.BufferPool;
+import simpledb.storage.IntField;
 import simpledb.storage.Tuple;
 import simpledb.storage.TupleDesc;
 import simpledb.transaction.TransactionAbortedException;
@@ -15,6 +19,11 @@ import simpledb.transaction.TransactionId;
 public class Insert extends Operator {
 
     private static final long serialVersionUID = 1L;
+    private TransactionId tId;
+    private OpIterator childIterator;
+    private int tableId;
+    private int count;
+    private TupleDesc tDesc;
 
     /**
      * Constructor.
@@ -32,23 +41,33 @@ public class Insert extends Operator {
     public Insert(TransactionId t, OpIterator child, int tableId)
             throws DbException {
         // some code goes here
+    	tId = t;
+    	childIterator = child;
+        this.tableId = tableId;
+        count = 0;
+        tDesc = new TupleDesc(new Type[] {Type.INT_TYPE});
     }
 
     public TupleDesc getTupleDesc() {
         // some code goes here
-        return null;
+        return tDesc;
     }
 
     public void open() throws DbException, TransactionAbortedException {
         // some code goes here
+    	super.open();
+    	childIterator.open();
     }
 
     public void close() {
         // some code goes here
+    	super.close();
+    	childIterator.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
         // some code goes here
+    	childIterator.rewind();
     }
 
     /**
@@ -66,17 +85,33 @@ public class Insert extends Operator {
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
         // some code goes here
-        return null;
+    	Tuple tuple = null;
+    	while(childIterator.hasNext()) {
+    		tuple = childIterator.next();
+    		try {
+				Database.getBufferPool().insertTuple(tId, tableId, tuple);
+			} catch (DbException | IOException | TransactionAbortedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+    		count++;
+    	}
+    	Tuple restuple = new Tuple(tDesc);
+    	restuple.setField(0, new IntField(count));
+        return restuple;
     }
 
     @Override
     public OpIterator[] getChildren() {
         // some code goes here
-        return null;
+    	OpIterator[] opIterators = new OpIterator[1];
+    	opIterators[0] = childIterator;
+        return opIterators;
     }
 
     @Override
     public void setChildren(OpIterator[] children) {
         // some code goes here
+    	childIterator = children[0];
     }
 }

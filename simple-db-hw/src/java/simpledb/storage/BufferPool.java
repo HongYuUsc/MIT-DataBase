@@ -8,7 +8,12 @@ import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
 import java.io.*;
-
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
 
 import javax.xml.catalog.Catalog;
@@ -36,8 +41,8 @@ public class BufferPool {
     public static final int DEFAULT_PAGES = 50;
     
     private final int max_page_nums;
-    
-    private final ConcurrentHashMap<PageId, Page> pageMap;
+    private final LinkedHashMap<PageId, Page> pageMap;
+    private TransactionId tId;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -47,7 +52,7 @@ public class BufferPool {
     public BufferPool(int numPages) {
         // some code goes here
     	max_page_nums = numPages;
-    	pageMap = new ConcurrentHashMap<PageId, Page>(numPages);
+    	pageMap = new LinkedHashMap<PageId, Page>(numPages);
     }
     
     public static int getPageSize() {
@@ -85,11 +90,12 @@ public class BufferPool {
     	Page pg = pageMap.get(pid);
     	if(pg == null) {
     		if(pageMap.size() >= max_page_nums) {
-        		throw new DbException("exceed max page nums");
+        		evictPage();
         	}
     		pg = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
     		pageMap.put(pid, pg);
     	}
+    	tId = tid;
     	return pg;
     }
 
@@ -155,6 +161,10 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+    	ArrayList<Page> pages = (ArrayList<Page>)(Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t));
+    	for(int i=0;i<pages.size();i++) {
+    		pageMap.put(pages.get(i).getId(), pages.get(i));
+    	}
     }
 
     /**
@@ -174,6 +184,9 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        RecordId rId = t.getRecordId();
+        Page page = getPage(tid, rId.getPageId(), null);
+        ((HeapPage)page).deleteTuple(t);
     }
 
     /**
@@ -184,7 +197,11 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-
+        Iterator<Map.Entry<PageId, Page>> it = pageMap.entrySet().iterator();
+        while(it.hasNext()) {
+        	Map.Entry<PageId, Page> entry = (Map.Entry<PageId, Page>)it.next();
+        	flushPage(entry.getKey());
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -198,6 +215,7 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
+    	pageMap.remove(pid);
     }
 
     /**
@@ -207,6 +225,16 @@ public class BufferPool {
     private synchronized  void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+    	Page page = pageMap.get(pid);
+    	if(page.isDirty() != null) {
+    		try {
+				Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
+			} catch (NoSuchElementException | IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+    	}
+    	page.markDirty(false, tId);
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -223,6 +251,17 @@ public class BufferPool {
     private synchronized  void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
+    	PageId pId = pageMap.entrySet().iterator().next().getKey();
+    	Page page = pageMap.get(pId);
+    	if(page.isDirty() != null) {
+    		try {
+				Database.getCatalog().getDatabaseFile(pId.getTableId()).writePage(page);
+			} catch (NoSuchElementException | IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+    	}
+		pageMap.remove(pId);
     }
 
 }

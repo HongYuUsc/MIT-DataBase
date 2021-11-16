@@ -29,6 +29,9 @@ public class HeapPage implements Page {
     byte[] oldData;
     private final Byte oldDataLock= (byte) 0;
     private ArrayList<Tuple> tps;
+    
+    private TransactionId tId;
+    private boolean isDirty;
 
     /**
      * Create a HeapPage from a set of bytes of data read from disk.
@@ -250,6 +253,16 @@ public class HeapPage implements Page {
     public void deleteTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+    	RecordId rId = t.getRecordId();
+    	if(!pid.equals(rId.getPageId())){
+    		throw new DbException("not reside in page");
+    	}
+    	int slotnum = rId.getTupleNumber();
+    	if(!isSlotUsed(slotnum)) {
+    		throw new DbException("slot is already empty");
+    	}
+    	markSlotUsed(slotnum, false);
+    	tuples[slotnum] = null;
     }
 
     /**
@@ -262,6 +275,21 @@ public class HeapPage implements Page {
     public void insertTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+    	if(getNumEmptySlots() == 0) {
+    		throw new DbException("no empty slots");
+    	}
+    	if(!td.equals(t.getTupleDesc())) {
+    		throw new DbException("tupledesc mismatch");
+    	}
+    	for(int i=0;i<numSlots;i++) {
+    		if(!isSlotUsed(i)) {
+    			RecordId rId = new RecordId(pid,numSlots);
+    			t.setRecordId(rId);
+    			tuples[i] = t;
+    			markSlotUsed(i, true);
+    			break;
+    		}
+    	}
     }
 
     /**
@@ -271,6 +299,8 @@ public class HeapPage implements Page {
     public void markDirty(boolean dirty, TransactionId tid) {
         // some code goes here
 	// not necessary for lab1
+    	isDirty = dirty;
+    	tId = tid;
     }
 
     /**
@@ -279,6 +309,9 @@ public class HeapPage implements Page {
     public TransactionId isDirty() {
         // some code goes here
 	// Not necessary for lab1
+    	if(isDirty) {
+    		return tId;
+    	}
         return null;      
     }
 
@@ -334,6 +367,13 @@ public class HeapPage implements Page {
     private void markSlotUsed(int i, boolean value) {
         // some code goes here
         // not necessary for lab1
+    	int block = i/8;
+    	int offset = i - block*8;
+    	if(value == false) {
+    		header[block] = (byte) (header[block] & (~(1 << offset)));
+    	}else {
+    		header[block] = (byte) (header[block] | (1 << offset));
+    	}
     }
 
     /**

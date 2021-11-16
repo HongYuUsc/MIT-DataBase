@@ -1,11 +1,21 @@
 package simpledb.optimizer;
 
+import java.nio.file.spi.FileSystemProvider;
+import java.util.concurrent.ConcurrentHashMap;
+
+import net.sf.antcontrib.perf.AntPerformanceListener;
 import simpledb.execution.Predicate;
 
 /** A class to represent a fixed-width histogram over a single integer-based field.
  */
 public class IntHistogram {
 
+	private ConcurrentHashMap<Integer, Integer> Histogram;
+	private int interval;
+	private int min;
+	private int max;
+	private int ntups;
+	
     /**
      * Create a new IntHistogram.
      * 
@@ -24,6 +34,14 @@ public class IntHistogram {
      */
     public IntHistogram(int buckets, int min, int max) {
     	// some code goes here
+    	interval = (max - min)/buckets + 1;
+    	Histogram = new ConcurrentHashMap<Integer, Integer>();
+    	this.min = min;
+    	this.max = max;
+    	for(int i=0;i<buckets;i++) {
+    		Histogram.put(min+i*interval, 0);
+    	}
+    	ntups = 0;
     }
 
     /**
@@ -32,6 +50,11 @@ public class IntHistogram {
      */
     public void addValue(int v) {
     	// some code goes here
+    	int bucketnum = (v-min)/interval;
+    	int key = min + bucketnum*interval;
+    	Integer val = Histogram.get(key);
+    	Histogram.put(key, val+1);
+    	ntups++;
     }
 
     /**
@@ -45,9 +68,49 @@ public class IntHistogram {
      * @return Predicted selectivity of this particular operator and value
      */
     public double estimateSelectivity(Predicate.Op op, int v) {
-
+    	String opString = op.toString();
+    	if(v < min && (op.toString() == ">" || op.toString() == ">=")) {
+    		v = min;
+    		opString = ">=";
+    	}else if(v > max && (op.toString() == "<" || op.toString() == "<=")) {
+    		v = max;
+    		opString = "<=";
+    	}
+    	int bucketnum = (v-min)/interval;
+    	int key = min + bucketnum*interval;
+    	Integer height = Histogram.get(key);
+    	double res = 0.0;
+    	if(height == null) {
+    		height = 0;
+    	}
+    	if(opString == "=") {
+    		res = (double)(height/interval)/(double)(ntups);
+    	}else if(opString == ">" || opString == ">=") {
+    		if(opString == ">") {
+    			res += ((double)(key + interval - 1 - v)/(double)(interval))*((double)height/(double)ntups);
+    		}else if(opString == ">=") {
+    			res += ((double)(key + interval - v)/(double)(interval))*((double)height/(double)ntups);
+    		}
+    		key += interval;
+    		for(;key<=max;key+=interval) {
+    			res += ((double)Histogram.get(key)/(double)(interval))/(double)ntups;
+    		}
+    	}else if(opString == "<" || opString == "<=") {
+    		if(opString == "<") {
+    			res += ((double)(v-key)/(double)(interval))*((double)height/(double)ntups);
+    		}else if(opString == "<=") {
+    			res += ((double)(v-key+1)/(double)(interval))*((double)height/(double)ntups);
+    		}
+    		key -= interval;
+    		for(;key>=min;key-=interval) {
+    			res += ((double)Histogram.get(key)/(double)(interval))/(double)ntups;
+    		}
+    	}else if(opString == "<>") {
+    		res = 1 - (double)(height/interval)/(double)(ntups);
+    	}
+    	
     	// some code goes here
-        return -1.0;
+        return res;
     }
     
     /**
@@ -69,6 +132,10 @@ public class IntHistogram {
      */
     public String toString() {
         // some code goes here
-        return null;
+    	String res = new String();
+    	for(Integer key:Histogram.keySet()) {
+    		res = res + "key=" + key + "height=" + Histogram.get(key) + "\n";
+    	}
+        return res;
     }
 }

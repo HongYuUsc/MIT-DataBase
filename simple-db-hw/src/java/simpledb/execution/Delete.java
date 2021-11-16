@@ -19,6 +19,11 @@ import java.io.IOException;
 public class Delete extends Operator {
 
     private static final long serialVersionUID = 1L;
+    private TransactionId tId;
+    private OpIterator childIterator;
+    private int tableId;
+    private int count;
+    private TupleDesc tDesc;
 
     /**
      * Constructor specifying the transaction that this delete belongs to as
@@ -31,23 +36,32 @@ public class Delete extends Operator {
      */
     public Delete(TransactionId t, OpIterator child) {
         // some code goes here
+    	tId = t;
+    	childIterator = child;
+        count = 0;
+        tDesc = new TupleDesc(new Type[] {Type.INT_TYPE});
     }
 
     public TupleDesc getTupleDesc() {
         // some code goes here
-        return null;
+        return tDesc;
     }
 
     public void open() throws DbException, TransactionAbortedException {
         // some code goes here
+    	super.open();
+    	childIterator.open();
     }
 
     public void close() {
         // some code goes here
+    	super.close();
+    	childIterator.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
         // some code goes here
+    	childIterator.rewind();
     }
 
     /**
@@ -61,7 +75,20 @@ public class Delete extends Operator {
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
         // some code goes here
-        return null;
+    	Tuple tuple = null;
+    	while(childIterator.hasNext()) {
+    		tuple = childIterator.next();
+    		try {
+				Database.getBufferPool().deleteTuple(tId, tuple);
+			} catch (DbException | IOException | TransactionAbortedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+    		count++;
+    	}
+    	Tuple restuple = new Tuple(tDesc);
+    	restuple.setField(0, new IntField(count));
+        return restuple;
     }
 
     @Override
