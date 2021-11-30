@@ -9,6 +9,7 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.Inflater;
 
 import org.junit.Test;
 
@@ -120,7 +121,7 @@ public class TransactionTest extends SimpleDbTestBase {
 
                         // race the other threads to finish the transaction: one will win
                         q1.close();
-
+                        
                         // delete old values (i.e., just one row) from table
                         Delete delOp = new Delete(tr.getId(), ss2);
 
@@ -128,20 +129,19 @@ public class TransactionTest extends SimpleDbTestBase {
 
                         q2.start();
                         q2.next();
-                        q2.close();
+                        q2.close();                     
 
                         // set up a Set with a tuple that is one higher than the old one.
                         Set<Tuple> hs = new HashSet<>();
                         hs.add(t);
                         TupleIterator ti = new TupleIterator(t.getTupleDesc(), hs);
-
                         // insert this new tuple into the table
                         Insert insOp = new Insert(tr.getId(), ti, tableId);
                         Query q3 = new Query(insOp, tr.getId());
                         q3.start();
                         q3.next();
                         q3.close();
-
+                        
                         tr.commit();
                         break;
                     } catch (TransactionAbortedException te) {

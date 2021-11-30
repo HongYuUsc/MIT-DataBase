@@ -85,12 +85,15 @@ public class Insert extends Operator {
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
         // some code goes here
+    	if(!childIterator.hasNext()) {
+    		return null;
+    	}
     	Tuple tuple = null;
     	while(childIterator.hasNext()) {
     		tuple = childIterator.next();
     		try {
 				Database.getBufferPool().insertTuple(tId, tableId, tuple);
-			} catch (DbException | IOException | TransactionAbortedException e) {
+			} catch (IOException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}

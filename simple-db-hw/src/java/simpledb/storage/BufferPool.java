@@ -9,14 +9,20 @@ import simpledb.transaction.TransactionId;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.NoSuchElementException;
+import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import javax.xml.catalog.Catalog;
+
+import net.sf.antcontrib.logic.IfTask;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -30,6 +36,213 @@ import javax.xml.catalog.Catalog;
  * @Threadsafe, all fields are final
  */
 public class BufferPool {
+	
+	enum LockType {
+		SLOCK,
+		XLOCK 
+	}
+	
+	public class LockManager{
+		/* Locker is the implementation of SLock and XLock */
+		private class Locker{
+			private LockType type;
+			private PageId pId;
+			private TransactionId tId;
+			
+			public Locker(TransactionId tId,PageId pId, LockType type) {
+				this.type = type;
+				this.pId = pId;
+				this.tId = tId;
+			}
+			
+			public void SetLockType(LockType type) {
+				this.type = type;
+			}
+			
+			public LockType GetLockType() {
+				return type;
+			}
+			
+			public TransactionId GetTransactionId() {
+				return tId;
+			}
+			
+			public PageId GetPageId() {
+				return pId;
+			}
+		}
+		
+		private ConcurrentHashMap<TransactionId, HashSet<Locker>> tid_lock;
+		private ConcurrentHashMap<PageId, HashSet<TransactionId>> pid_tids;
+		private ConcurrentHashMap<TransactionId, HashSet<TransactionId>> wait_graph;
+		
+		public LockManager() {
+			tid_lock = new ConcurrentHashMap<TransactionId, HashSet<Locker>>();
+			pid_tids = new ConcurrentHashMap<PageId, HashSet<TransactionId>>();
+			wait_graph = new ConcurrentHashMap<TransactionId, HashSet<TransactionId>>();
+		}
+		
+		public synchronized void acquireLock(TransactionId tId,PageId pId,LockType type) throws TransactionAbortedException {
+			while(true) {
+				HashSet<TransactionId> tIds = pid_tids.get(pId);
+				boolean blocked = false;
+				HashSet<TransactionId> blockList = new HashSet<TransactionId>();
+				if(tIds!=null) {
+					if(type == LockType.XLOCK) {
+						if(isLocked(tId, pId)) {
+							HashSet<Locker> lockers = tid_lock.get(tId);
+							if(tIds.size() == 1) {
+								/* Only one lock, upgrade the locktype to XLOCK */
+								for(Locker locker:lockers) {
+									if(locker.GetPageId() == pId) {
+										locker.SetLockType(type);
+									}
+								}
+								return;
+							}else {
+								Iterator<TransactionId> iterator = tIds.iterator();
+								while(iterator.hasNext()) {
+									TransactionId blockId = iterator.next();
+									if(blockId != tId) {
+										blockList.add(tId);
+									}
+								}
+								blocked = true;
+							}
+						}else if(tIds.size() > 0) {
+							Iterator<TransactionId> iterator = tIds.iterator();
+							while(iterator.hasNext()) {
+								blockList.add(iterator.next());
+							}
+							blocked = true;
+						}
+					}else if(type == LockType.SLOCK) {
+						if(isLocked(tId, pId)) {
+							return;
+						}else {
+							for(TransactionId tid:tIds) {
+								HashSet<Locker> lockers = tid_lock.get(tid);
+								for(Locker locker:lockers) {
+									if(locker.GetPageId() == pId && locker.GetLockType() == LockType.XLOCK) {
+										blocked = true;
+										blockList.add(tid);
+									}
+								}
+							}
+						}
+					}
+					if(blocked) {
+						/*check whether there is a deadlock*/
+						wait_graph.put(tId, blockList);
+						if(isdeadlock(tId, tId)) {
+							wait_graph.remove(tId);
+							throw new TransactionAbortedException();
+						}
+						sleepForRandomTime();
+						continue;
+					}
+				}
+				wait_graph.remove(tId);
+				
+				if(tIds == null) {
+					tIds = new HashSet<TransactionId>();
+				}
+				tIds.add(tId);
+				pid_tids.put(pId, tIds);
+				Locker locker = new Locker(tId,pId, type);
+				HashSet<Locker> lockers = tid_lock.get(tId);
+				if(lockers == null) {
+					lockers = new HashSet<Locker>();
+				}
+				lockers.add(locker);
+				tid_lock.put(tId, lockers);
+				break;
+			}
+		}
+		
+		public synchronized void releaseAllLocks(TransactionId tId) {
+			ArrayList<PageId> pIds = lockManager.getLockedPageIds(tId);
+			if(pIds == null) {
+				return;
+			}
+			for(PageId pid:pIds) {
+				releaseLock(tId, pid);
+			}
+		}
+		
+		public synchronized ArrayList<PageId> getLockedPageIds(TransactionId tId) {
+			HashSet<Locker> lockers = tid_lock.get(tId);
+			if(lockers == null) {
+				return null;
+			}
+			ArrayList<PageId> pIds = new ArrayList<PageId>();
+			Iterator<Locker> iterator = lockers.iterator();
+			while(iterator.hasNext()) {
+				pIds.add(iterator.next().pId);
+			}
+			return pIds;
+		}
+		
+		public synchronized void releaseLock(TransactionId tId,PageId pId) {
+			HashSet<TransactionId> htTransactionIds = pid_tids.get(pId);
+			if(htTransactionIds == null) {
+				return;
+			}
+			htTransactionIds.remove(tId);
+			if(htTransactionIds.size() == 0) {
+				pid_tids.remove(pId);
+			}
+			
+			HashSet<Locker> lockers = tid_lock.get(tId);
+			Iterator<Locker> iterator = lockers.iterator();
+			while(iterator.hasNext()) {
+				Locker locker = iterator.next();
+				if(locker.GetPageId() == pId) {
+					iterator.remove();
+				}
+			}
+			if(lockers.size() == 0) {
+				tid_lock.remove(tId);
+			}
+		}
+		
+		public synchronized boolean isLocked(TransactionId tId,PageId pId) {
+			HashSet<TransactionId> htTransactionIds = pid_tids.get(pId);
+			return htTransactionIds.contains(tId);
+		}
+		
+		public synchronized boolean isPageLocked(PageId pId) {
+			HashSet<TransactionId> htTransactionIds = pid_tids.get(pId);
+			return htTransactionIds != null && htTransactionIds.size()>0;
+		}
+		
+		private synchronized boolean isdeadlock(TransactionId targeId, TransactionId tId) {
+			HashSet<TransactionId> tIds = wait_graph.get(tId);
+			if(tIds == null || tIds.size() == 0) {
+				return false;
+			}
+			Iterator<TransactionId> blockIterator = tIds.iterator();
+			while(blockIterator.hasNext()) {
+				TransactionId blockId = blockIterator.next();
+				if(blockId == targeId || isdeadlock(targeId, blockId)) {
+					return true;
+				}
+			}
+			return false;
+		}
+		
+		private void sleepForRandomTime() {
+			Random random = new Random();
+			try {
+				wait(random.nextInt(500));
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+	}
+	
+	
     /** Bytes per page, including header. */
     private static final int DEFAULT_PAGE_SIZE = 4096;
 
@@ -43,6 +256,7 @@ public class BufferPool {
     private final int max_page_nums;
     private final LinkedHashMap<PageId, Page> pageMap;
     private TransactionId tId;
+    private LockManager lockManager;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -53,6 +267,7 @@ public class BufferPool {
         // some code goes here
     	max_page_nums = numPages;
     	pageMap = new LinkedHashMap<PageId, Page>(numPages);
+    	lockManager = new LockManager();
     }
     
     public static int getPageSize() {
@@ -87,6 +302,8 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
+    	LockType lockType = (perm == Permissions.READ_ONLY ? LockType.SLOCK : LockType.XLOCK);
+    	lockManager.acquireLock(tid, pid, lockType);
     	Page pg = pageMap.get(pid);
     	if(pg == null) {
     		if(pageMap.size() >= max_page_nums) {
@@ -111,6 +328,7 @@ public class BufferPool {
     public  void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
+    	lockManager.releaseLock(tid, pid);
     }
 
     /**
@@ -121,13 +339,14 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) {
         // some code goes here
         // not necessary for lab1|lab2
+    	transactionComplete(tid,true);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
     public boolean holdsLock(TransactionId tid, PageId p) {
         // some code goes here
         // not necessary for lab1|lab2
-        return false;
+        return lockManager.isLocked(tid, p);
     }
 
     /**
@@ -140,6 +359,21 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid, boolean commit) {
         // some code goes here
         // not necessary for lab1|lab2
+    	if(commit) {
+    		try {
+				flushPages(tid);
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+    	}else {
+    		ArrayList<PageId> pIds = lockManager.getLockedPageIds(tid);
+    		for(PageId pid:pIds) {
+    			HeapPage pg = (HeapPage)Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+        		pageMap.put(pid, pg);
+    		}
+    	}
+    	lockManager.releaseAllLocks(tid);
     }
 
     /**
@@ -163,6 +397,7 @@ public class BufferPool {
         // not necessary for lab1
     	ArrayList<Page> pages = (ArrayList<Page>)(Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t));
     	for(int i=0;i<pages.size();i++) {
+    		((HeapPage)pages.get(i)).markDirty(true, tid);
     		pageMap.put(pages.get(i).getId(), pages.get(i));
     	}
     }
@@ -185,7 +420,8 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
         RecordId rId = t.getRecordId();
-        Page page = getPage(tid, rId.getPageId(), null);
+        Page page = getPage(tid, rId.getPageId(), Permissions.READ_WRITE);
+        ((HeapPage)page).markDirty(true, tid);
         ((HeapPage)page).deleteTuple(t);
     }
 
@@ -226,6 +462,9 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
     	Page page = pageMap.get(pid);
+    	if(page == null) {
+    		return;
+    	}
     	if(page.isDirty() != null) {
     		try {
 				Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
@@ -242,6 +481,14 @@ public class BufferPool {
     public synchronized  void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+    	ArrayList<PageId> pIds = lockManager.getLockedPageIds(tid);
+    	if(pIds == null) {
+    		return;
+    	}
+    	Iterator<PageId> iterator = pIds.iterator();
+    	while(iterator.hasNext()) {
+    		flushPage(iterator.next());
+    	}
     }
 
     /**
@@ -251,17 +498,16 @@ public class BufferPool {
     private synchronized  void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
-    	PageId pId = pageMap.entrySet().iterator().next().getKey();
-    	Page page = pageMap.get(pId);
-    	if(page.isDirty() != null) {
-    		try {
-				Database.getCatalog().getDatabaseFile(pId.getTableId()).writePage(page);
-			} catch (NoSuchElementException | IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
+    	Iterator<Entry<PageId, Page>> iterator = pageMap.entrySet().iterator();
+    	while(iterator.hasNext()) {
+    		Page page = iterator.next().getValue();
+    		if(page.isDirty() != null) {
+    			continue;
+    		}
+    		iterator.remove();
+    		return;
     	}
-		pageMap.remove(pId);
+    	throw new DbException("all pages are dirty");
     }
 
 }

@@ -80,7 +80,7 @@ public class Delete extends Operator {
     		tuple = childIterator.next();
     		try {
 				Database.getBufferPool().deleteTuple(tId, tuple);
-			} catch (DbException | IOException | TransactionAbortedException e) {
+			} catch (IOException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}

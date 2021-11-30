@@ -12,6 +12,7 @@ import java.io.*;
 import java.util.*;
 
 import javax.print.attribute.standard.PagesPerMinute;
+import javax.swing.plaf.basic.BasicInternalFrameTitlePane.SystemMenuBar;
 
 import net.sf.antcontrib.logic.IfTask;
 
@@ -106,7 +107,7 @@ public class HeapFile implements DbFile {
     	byte[] data = page.getPageData();
     	RandomAccessFile out = new  RandomAccessFile(hFile, "rws");
     	out.skipBytes(pgno * pgsize);
-    	out.write(data);   
+    	out.write(data);
     }
 
     /**
@@ -133,13 +134,14 @@ public class HeapFile implements DbFile {
     	ArrayList<Page> resArrayList = new ArrayList<Page>();
     	for(int i=0;i<num;i++) {
     		PageId pId = new HeapPageId(getId(),i);
-    		HeapPage page = (HeapPage)Database.getBufferPool().getPage(tid, pId, null);
+    		HeapPage page = (HeapPage)Database.getBufferPool().getPage(tid, pId, Permissions.READ_WRITE);
     		if(page.getNumEmptySlots() > 0) {
     			page.insertTuple(t);
     			resArrayList.add(page);
     			page.markDirty(true, tid);
     			return resArrayList;
     		}
+    		//Database.getBufferPool().unsafeReleasePage(tid, pId);
     	}
     	
     	HeapPageId pid = new HeapPageId(getId(), num);
@@ -162,7 +164,7 @@ public class HeapFile implements DbFile {
     	int num = numPages();
     	RecordId rId = t.getRecordId();
     	PageId pId = rId.getPageId();
-    	HeapPage page = (HeapPage)Database.getBufferPool().getPage(tid, pId, null);
+    	HeapPage page = (HeapPage)Database.getBufferPool().getPage(tid, pId, Permissions.READ_WRITE);
     	page.deleteTuple(t);
     	page.markDirty(true, tid);
     	ArrayList<Page> resArrayList = new ArrayList<Page>();
@@ -216,7 +218,7 @@ public class HeapFile implements DbFile {
             if (hasNext())  {
                 return tupleIter.next();
             }
-            throw new NoSuchElementException("HeapFileIterator: error: next: no more elemens");
+            return null;
         }
 
         @Override
