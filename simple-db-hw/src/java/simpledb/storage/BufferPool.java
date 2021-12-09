@@ -397,7 +397,7 @@ public class BufferPool {
         // not necessary for lab1
     	ArrayList<Page> pages = (ArrayList<Page>)(Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t));
     	for(int i=0;i<pages.size();i++) {
-    		((HeapPage)pages.get(i)).markDirty(true, tid);
+    		(pages.get(i)).markDirty(true, tid);
     		pageMap.put(pages.get(i).getId(), pages.get(i));
     	}
     }
@@ -419,10 +419,12 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
-        RecordId rId = t.getRecordId();
-        Page page = getPage(tid, rId.getPageId(), Permissions.READ_WRITE);
-        ((HeapPage)page).markDirty(true, tid);
-        ((HeapPage)page).deleteTuple(t);
+    	int tableId = t.getRecordId().getPageId().getTableId();
+    	ArrayList<Page> pages = (ArrayList<Page>)(Database.getCatalog().getDatabaseFile(tableId).deleteTuple(tid, t));
+    	for(int i=0;i<pages.size();i++) {
+    		(pages.get(i)).markDirty(true, tid);
+    		pageMap.put(pages.get(i).getId(), pages.get(i));
+    	}
     }
 
     /**
