@@ -361,7 +361,17 @@ public class BufferPool {
         // not necessary for lab1|lab2
     	if(commit) {
     		try {
-				flushPages(tid);
+    			ArrayList<PageId> pIds = lockManager.getLockedPageIds(tid);
+    	    	if(pIds == null) {
+    	    		return;
+    	    	}
+    	    	Iterator<PageId> iterator = pIds.iterator();
+    	    	while(iterator.hasNext()) {
+    	    		PageId pid = iterator.next();
+    	    		flushPage(pid);
+    	    		Page page = pageMap.get(pid);
+    	    		page.setBeforeImage();
+    	    	}
 			} catch (IOException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
@@ -469,6 +479,13 @@ public class BufferPool {
     	}
     	if(page.isDirty() != null) {
     		try {
+    		    // append an update record to the log, with 
+    		    // a before-image and after-image.
+    		    TransactionId dirtier = page.isDirty();
+    		    if (dirtier != null){
+    		      Database.getLogFile().logWrite(dirtier, page.getBeforeImage(), page);
+    		      Database.getLogFile().force();
+    		    }
 				Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
 			} catch (NoSuchElementException | IOException e) {
 				// TODO Auto-generated catch block
